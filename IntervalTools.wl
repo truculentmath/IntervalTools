@@ -15,8 +15,13 @@ BeginPackage["IntervalTools`","QueueStack`"];
 (*Usage Messages*)
 
 
+RealInterval::usage = "RealInterval is shorthand for Interval[{-Infinity,Infinity}]."
+
 IntervalHull::usage = "IntervalHull[interval1, ...] returns the smallest \
 interval that contains all of interval1, ... .";
+
+IntervalSimplify::usage = "IntervalSimplify[{domain1, domain2, ...}] typically returns  a shorter  list of domains  \
+that has the same union. A domain is a list of d Interval objects.";
 
 IntervalWidth::usage = "IntervalWidth[interval] returns the width of interval. \
 Returns a list of widths if given a list of intervals.";
@@ -51,7 +56,7 @@ single variable expressions.";
 PiecewiseMonotoneEnclosure::usage = "PiecewiseMonotoneEnclosure[expr,var,listofexceptions,interval] \
 assumes that expr is continuous and monotone on interval between listofexceptions.";
 
-SplitInterval::usage = "SplitInterval[interval] returns a list of intervals whose union is interval and with smaller widths than interval.
+SplitInterval::usage = "SplitInterval[int] returns a list of intervals whose union is int and with smaller widths than int.
 SplitInterval[{\!\(\*SubscriptBox[\(interval\), \(1\)]\), \!\(\*SubscriptBox[\(interval\), \(2\)]\),..}] interprets the list of intervals a box in higher dimensions.";
 
 RationalFunctionQ::usage = "RationalFunctionQ[ expr, ListOfVariables ] returns True if \
@@ -61,6 +66,10 @@ obvious. Will not perform any simplifications."
 IntervalGraphics::usage = "If L is a list of {Interval[{a,b}],Interval[{c,d}]} objects, i.e., rectangles, this makes a \
 2-dimensional picture of them.";
 
+RigorousPlot::usage = "RigorousPlot[intervalF,dom,rng,opts] gives a plot of the function with interval enclosure \
+intervalF over domain dom, with the output restricted to rng. The optional arguments opts are passed to \
+Show. The graph of f is guaranteeed to lie within the plotted rectangles.";
+
 RationalizeInterval::usage = "RationalizeInterval[g] returns an interval with rational endpoints \
 that contains g. The form Rationalize[g,epsilon] returns an interval that is most epsilon larger \
 on each side.";
@@ -69,8 +78,8 @@ ProveNonNegative::usage = "ProveNonNegative[f,intervalF,domain] takes a function
 interval enclosure of the function, and a domain, and returns a \
 triple {fails,uncertain,settled} giving arguments where the function f is negative, \
 where the sign could not be determined, and where the function f is proved nonnegative. \
-If certificate->False is used as an option, then only the last example of each \
-is returned. Also, MaxDepth->10 can be changed.";
+If Certificate->False is used as an option, then only the last example of each \
+is returned. Also, the default MaxDepth->10 can be changed.";
 
 IntervalIntegrate::usage = "IntervalIntegrate[intervalF, interval, errorbound] takes an \
 interval enclosure, a domain, and an errorbound, and keeps subdividing interval \
@@ -83,16 +92,26 @@ NewtonsMethod::usage = "NewtonsMethod[f, intervalF, domain] returns an interval 
 to contain all solutions to f[x]==0 with x in domain. The pure function intervalF must \
 be an interval enclosure of the derivative of f. Only works with single variable functions.";
 
-MooreSkelboeMinimize::usage = "MooreSkelboeMinimize[f, intervalF, domain, domaintolerance] returns \
-an interval that is proven to contain the infimum of f on domain (a list of simple intervals) \
-and a list of subdomains that is guaranteed to contain all points where the infimum occurs. The option \
-certificate -> False returns only a guess for where the minimum may occur, by averaging the \
-certificate. The method is Moore-Skelboe, and the algorithm proceeds until all of the domains \
-being inspected have either been eliminated or have width at most domaintolerance. Beware \
-of calling this function with domaintolerance too small.";
+RigorousMinimize::usage = "RigorousMinimize[f, intervalF, domain] returns a pair {val,domains}, \
+with val an interval that is guaranteed to contain the minimum value of f on  domain, and domains \
+a list of (multidimensional) intervals whose union is guaranteed to contain all points at \
+which f attains its minimum. Options include Certificate (set to False if you only want a \
+point where the function is close to its minimum) DomainTolerance (the algorithm stops \
+working on intervals whose width is below DomainTolerance), RangeTolerance (the \
+algorithm stops working on intervals on which the range of f is has width at most \
+RangeTolerance) and SplittingMethod (defaults to \"Fattest Dimension\").";
+
+RigorousMaximize::usage = "RigorousMaximize[f, intervalF, domain] returns a pair {val,domains}, \
+with val an interval that is guaranteed to contain the maximum value of f on  domain, and domains \
+a list of (multidimensional) intervals whose union is guaranteed to contain all points at \
+which f attains its maximum. Options include Certificate (set to False if you only want a \
+point where the function is close to its maximum) DomainTolerance (the algorithm stops \
+working on intervals whose width is below DomainTolerance), RangeTolerance (the \
+algorithm stops working on intervals on which the range of f is has width at most \
+RangeTolerance) and SplittingMethod (defaults to \"Fattest Dimension\").";
 
 
-(* ::Subtitle:: *)
+(* ::Subtitle::Closed:: *)
 (*Additional Primitive Interval Enclosures*)
 
 
@@ -157,9 +176,52 @@ Begin["`Private`"]
 (*Interval Operations*)
 
 
+RealInterval = Interval[{-Infinity,Infinity}];
+
+
 IntervalHull[g___Interval]:=Interval[{Min[Map[Min,{g}]],Max[Map[Max,{g}]]}];
 IntervalHull[]=Interval[];
 IntervalHull[g_Real] := Interval[g];
+
+
+(* a "domain" is a list of intervals. If there are d intervals, this is a subset of R^d. *)
+IntervalHull[domains_List]:=Module[{mins,maxs},
+mins=Map[Min,Transpose[Map[Map[Min,#]&,domains]]];
+maxs=Map[Max,Transpose[Map[Map[Max,#]&,domains]]];
+Map[Interval,Transpose[{mins,maxs}]]]
+
+
+(* simplifies a list of domains *)
+IntervalSimplify[List[gseq__List]]:=
+Module[
+{
+g={gseq},
+dimension,
+firsts,
+verticalstrips,
+un,(*temperary storage*)
+output
+},
+dimension=Length[g[[1]]];
+Which[
+dimension===1,
+	un=IntervalUnion@@Flatten[g];
+	output=Map[List[Interval[#]]&,List@@un],
+dimension === 2,
+	firsts=Union[Map[First,g]];
+	verticalstrips=Table[
+					{firsts[[k]],IntervalUnion@@(Last/@Select[g,First[#]===firsts[[k]]&])}
+					,{k,Length[firsts]}];
+	output=verticalstrips,
+dimension  > 2,
+	firsts=Union[Map[First,g]];
+	verticalstrips=Table[
+					{firsts[[k]],IntervalUnion@@(Drop[#,1]&/@Select[g,First[#]===firsts[[k]]&])}
+					,{k,Length[firsts]}];
+	output=verticalstrips;
+	Print["Warning: simplification not yet tested for dimension greater than 2."]
+];
+output]
 
 
 SetAttributes[IntervalWidth,Listable];
@@ -319,28 +381,70 @@ Map[{RoundDown[Min[#]],RoundUp[Max[#]]}&,g]]
 (*Graphics*)
 
 
-IntervalGraphics[g_Interval]:=If[
-IntervalWidth[g]==0,Graphics[Point[{0,Min[g]}]],
-Graphics[Union[Map[{Line[{{Min[#],0},{Max[#],0}}],Point[{Min[#],0}],Point[{Max[#],0}]}&,
-List@@g]]]];
+(*picturing a 1-dimensional interval object*)
+IntervalGraphics[g_Interval]:=
+	If[
+		IntervalWidth[g]==0,
+		Graphics[Point[{0,Min[g]}]],
+		Graphics[Union[Map[{Line[{{Min[#],0},{Max[#],0}}],Point[{Min[#],0}],Point[{Max[#],0}]}&,
+		List@@g]]]
+	];
 
 
 
-IntervalGraphics[L_List,domain_,opts___]:=
-	Block[
-	{domtorect={Interval[{a_,b_}],Interval[{c_,d_}]}:>Rectangle[{a,c},{b,d}],tiny,diameter},
-	If[Length[L]>=1&&Length[domain]===2,
-		diameter = Max[Table[IntervalWidth[domain[[i]]]/IntervalWidth[L[[1]][[i]]],{i,2}]];
-		If[diameter<100,
-			Graphics[Join[{EdgeForm[Directive[Thin,Dashed,Blue]],LightGray,opts},
-							L/.domtorect],
-							PlotRange->{MinMax[domain[[1]]],MinMax[domain[[2]]]},
-							AspectRatio->1],
-			Graphics[Join[{LightGray,opts},
-							L/.domtorect],
-							PlotRange->{MinMax[domain[[1]]],MinMax[domain[[2]]]},
-							AspectRatio->1]],
-		Null]];
+(*picturing a list of 2-dimensional interval objects*)
+IntervalGraphics[L_List, domain_, opts___]:=
+Module[{intTOrect,rectangles,domainarea,smallrectangles,largerectangles},
+intTOrect[{A_Interval,B_Interval}]:=
+	Module[{cutA,cutB},
+		cutA=IntervalIntersection[A,domain[[1]]];
+		cutB=IntervalIntersection[B,domain[[2]]];
+		Flatten[Table[Rectangle[{Min[cutA[[i]]],Min[cutB[[j]]]},{Max[cutA[[i]]],Max[cutB[[j]]]}],
+{i,Length[cutA]},{j,Length[cutB]}]]];
+
+rectangles=Flatten[Map[intTOrect,L]];
+
+domainarea=IntervalWidth[domain[[1]]]*IntervalWidth[domain[[2]]];
+
+smallrectangles=Select[rectangles,Area[#]<domainarea/2^16&]/.Rectangle[{a_,b_},{c_,d_}]:>Point[({a,b}+{c,d})/2];
+largerectangles=Complement[rectangles,smallrectangles];
+
+Graphics[Join[{Gray,opts},smallrectangles,{LightGray,EdgeForm[Directive[Thin,Dashed,Blue]]},
+							largerectangles]]];
+
+
+RigorousPlot[gapF_, domain_Interval, range_Interval, opts___] :=
+ 
+ Module[{rectangles, dw, dh, workingboxes, qualityboxes, in, out, in1,
+    out1, in2, out2, box},
+  dw = IntervalWidth[domain]/256;
+  dh = IntervalWidth[range]/256;
+  
+  workingboxes = CreateDataStructure["Stack"];
+  workingboxes["Push", box[domain, gapF[domain]]];
+  qualityboxes = CreateDataStructure["Stack"];
+  
+  While[Not[workingboxes["EmptyQ"]],
+   {in, out} = List @@ workingboxes["Pop"];
+   {in1, in2} = SplitInterval[in];
+   {out1, out2} = Map[IntervalIntersection[gapF[#], range] &, {in1, in2}];
+   If[IntervalWidth[in1] <= dw || IntervalWidth[out1] <= dh,
+    qualityboxes["Push", box[in1, out1]],
+    workingboxes["Push", box[in1, out1]]];
+   If[IntervalWidth[in2] <= dw || IntervalWidth[out2] <= dh,
+    qualityboxes["Push", box[in2, out2]],
+    workingboxes["Push", box[in2, out2]]]
+   ];
+  
+  rectangles = 
+   qualityboxes[
+     "Elements"] /. {box[Interval[{a_, b_}], Interval[{c_, d_}]] :> 
+      Rectangle[{a, c}, N[{b, d}]],
+     box[Interval[{a_, b_}], Interval[]] :> Null};
+  
+  Show[Graphics[Join[{Black}, rectangles]], opts]
+  
+  ]
 
 
 (* ::Section::Closed:: *)
@@ -411,7 +515,7 @@ NewtonsMethod[f_,df_,domain_Interval,OptionsPattern[]]:=
 
 		WorkOnInterval[dom_,0]:=dom;
 		WorkOnInterval[dom_,n_]:=(*dom should be Interval[{a,b}]*)
-			Module[{epsilon=epsilonbase.{1,Max[dom]},newdomain},
+			Module[{epsilon=epsilonbase . {1,Max[dom]},newdomain},
 				If[
 					IntervalWidth[dom]<epsilon,
 					dom,
@@ -426,7 +530,7 @@ NewtonsMethod[f_,df_,domain_Interval,OptionsPattern[]]:=
 (*Proving Inequalities*)
 
 
-Options[ProveNonNegative]={certificate->True,MaxDepth->10,SplittingMethod -> "Every Dimension"};
+Options[ProveNonNegative]={Certificate->True,MaxDepth->10,SplittingMethod -> "Every Dimension"};
 ProveNonNegative[F_,gapF_,box_List,OptionsPattern[]]:=
 	Module[
 	{GoDeeper,
@@ -438,7 +542,7 @@ ProveNonNegative[F_,gapF_,box_List,OptionsPattern[]]:=
 		Module[
 		{tb=gapF@@sdm,middles,value},
 		If[Min[tb]>=0,
-			works=If[OptionValue[certificate],{works,sdm},sdm],
+			works=If[OptionValue[Certificate],{works,sdm},sdm],
 
 			middles=SimplistInteriorPoint[sdm];
 			value=F@@middles;
@@ -448,10 +552,10 @@ ProveNonNegative[F_,gapF_,box_List,OptionsPattern[]]:=
 
 			If[stillworking,
 				If[depth==0,
-					unsettled=If[OptionValue[certificate],{unsettled,sdm},sdm],
+					unsettled=If[OptionValue[Certificate],{unsettled,sdm},sdm],
 					Map[GoDeeper[depth-1,#1]&,SplitInterval[sdm,Method->OptionValue[SplittingMethod]]]
 				],
-				unsettled=If[OptionValue[certificate],{unsettled,sdm},sdm]]]];
+				unsettled=If[OptionValue[Certificate],{unsettled,sdm},sdm]]]];
 
 	GoDeeper[OptionValue[MaxDepth],box];
 
@@ -460,7 +564,7 @@ ProveNonNegative[F_,gapF_,box_List,OptionsPattern[]]:=
 	Partition[Flatten[works],Length[box]]}]
 
 
-(* ::Section:: *)
+(* ::Section::Closed:: *)
 (*Integration*)
 
 
@@ -497,46 +601,144 @@ IntervalIntegrate[gapF_,domain_Interval,OptionsPattern[]]:=
 (*Global Optimization*)
 
 
-Options[MooreSkelboeMinimize]={certificate->True,SplittingMethod -> "Fattest Dimension"};
+Options[RigorousMinimize]=
+	{
+	DetailedOutput -> True,
+	SplittingMethod -> "Fattest Dimension",
+	DomainTolerance -> 2^-20,
+	RangeTolerance -> 2^-20
+	};
 
-MooreSkelboeMinimize[F_,gapF_,box_List,domaintolerance_,OptionsPattern[]]:=
-Module[
-{infub=\[Infinity],inflb,dig,corner,n,likely,plausible,sdm,int,newpairs,newval,infwhere},
+RigorousMinimize[F_, gapF_, box_List, opts___] :=
+	Module[{newF,newgapF,vals,domains},
+	newF[x___]:= -F[x];
+	newgapF[x___]:=-gapF[x];
+	
+	{vals,domains}=RigorousMaximize[newF,newgapF,box,opts];
+	
+	{-vals,domains}];
+			
+Options[RigorousMaximize]=
+	{
+	DetailedOutput -> True,
+	SplittingMethod -> "Fattest Dimension",
+	DomainTolerance -> 2^-20,
+	RangeTolerance -> 2^-20
+	};
 
-QueuePush[plausible,{gapF@@box,box}];
-(* specifically look for  the min to happen at a corner *)
-Do[
-dig=IntegerDigits[n,2,Length[box]];
-corner=Table[If[dig[[i]]==0,Min[box[[i]]],Max[box[[i]]]],{i,Length[box]}];
-infub=Min[infub,F@@corner],
-{n,0,2^Length[box]-1}];
+RigorousMaximize[F_, gapF_, box_List, OptionsPattern[]] :=
+	If[$VersionNumber >= 12.1,
+		NewIntervalMaximize[ F, gapF, box, 
+			OptionValue[DetailedOutput],
+			OptionValue[SplittingMethod],
+			OptionValue[DomainTolerance],
+			OptionValue[RangeTolerance]],
+		Module[{G,gapG},
+			G[x___]:=-F[x];
+			gapG[x___]:=-G[x];
+			OldIntervalMaximize[ G, gapG, box, 
+			OptionValue[DetailedOutput],
+			OptionValue[SplittingMethod],
+			OptionValue[DomainTolerance]
+			]]];
+		
+NewIntervalMaximize[F_,gapF_,box_List,DetailedOutput_,SplittingMethod_,DomainTolerance_,RangeTolerance_]:=
+	Module[
+	{upperbound, (* upper bound on the maximum *)
+	lowerbound, (* lower bound on the maximum *)
+	dig,corner, (* used for evaluate F at many points to start off with a reasonable lower bound for the maximum *)
+	working,potential,successful, (* queues that store the intervals yet to work on, good candidates that need processing,*)
+	rank,fmin,fmax,
+	subdomains,dom,int,
+	where (* output intervals guaranteed to contain the location of the maximum *)
+	},
+	
+		lowerbound = F@@SimplistInteriorPoint[box];
+		(*Do[
+			dig = IntegerDigits[n,2,Length[box]];
+			corner = Table[If[dig\[LeftDoubleBracket]i\[RightDoubleBracket]\[Equal]0,Min[box\[LeftDoubleBracket]i\[RightDoubleBracket]],Max[box\[LeftDoubleBracket]i\[RightDoubleBracket]]], {i,Length[box]}];
+			lowerbound = Min[lowerbound, F@@corner]
+		,{n,0,2^Length[box]-1}];*)
 
-While[Not[QueueEmpty[plausible]],
-{int,sdm}=QueuePop[plausible];
-If[Min[int]<=infub,
-If[Max@@IntervalWidth[sdm]<=domaintolerance,
+		working = CreateDataStructure["PriorityQueue"];(* L *)
+		int = gapF @@ box;
+		working["Push",{Max[N[int,2-Log[10,RangeTolerance]]], int, box}];
+		
+		potential = CreateDataStructure["Queue"]; (* C *)
+		
+		While[Not[working["EmptyQ"]],
+			{rank, int, dom} = working["Pop"];
+			{fmin, fmax} = MinMax[int];
+			
+			If[fmax >= lowerbound,
+				lowerbound = Max[lowerbound,fmin];
+				If[fmax-fmin < RangeTolerance 
+					|| 
+					Max[IntervalWidth[dom]] < DomainTolerance,
+					
+					potential["Push",{fmax,dom}],
+					
+					lowerbound = Max[lowerbound, F @@ SimplistInteriorPoint[dom]];
+					subdomains = SplitInterval[dom, Method->SplittingMethod];
+					subdomains = Map[{gapF @@ #, #}&, subdomains];
+					subdomains = Select[subdomains, Max[First[#]] >= lowerbound&];
+					subdomains = Map[{N[Max[#1[[1]]]], #1[[1]], #1[[2]]}&, subdomains];
+					Scan[working["Push", #]&, subdomains ]
+				]
+			]
+		];
+				
+		(* Work done, now prepare the output *)
+		successful=CreateDataStructure["Queue"]; (* output *)
+		
+		upperbound = -\[Infinity];
+		While[Not[potential["EmptyQ"]],
+			{fmax,dom} = potential["Pop"];
+			If[fmax >= lowerbound , upperbound = Max[upperbound,fmax]; successful["Push",dom]]];
+		
+		where = If[DetailedOutput , IntervalSimplify[Normal[successful]], IntervalHull[Normal[successful]] ];
+			
+		{Interval[{lowerbound,upperbound}], where}
+	];
+	
+OldIntervalMaximize[F_,gapF_,box_List,Certificate_,SplittingMethod_,DomainTolerance_]:=
+	Module[
+	{infub=\[Infinity],inflb,dig,corner,n,likely,plausible,sdm,int,newpairs,newval,infwhere},
 
-QueuePush[likely,{int,sdm}],
+	QueuePush[plausible,{gapF@@box,box}];
+	(* specifically look for  the min to happen at a corner *)
+	Do[
+		dig=IntegerDigits[n,2,Length[box]];
+		corner=Table[If[dig[[i]]==0,Min[box[[i]]],Max[box[[i]]]],{i,Length[box]}];
+		infub=Min[infub,F@@corner],
+	{n,0,2^Length[box]-1}];
 
-If[newval=F@@SimplistInteriorPoint[sdm];newval<infub,
-infub=newval;
-QueueSelect[plausible,plausible,Min[First[#]]<=infub&]
-];
+	While[Not[QueueEmpty[plausible]],
+		{int,sdm}=QueuePop[plausible];
+		If[Min[int]<=infub,
+			If[Max@@IntervalWidth[sdm] <= DomainTolerance,
 
-newpairs=Map[{gapF@@#,#}&,SplitInterval[sdm,Method->OptionValue[SplittingMethod]]];
-newpairs=Select[newpairs,Min[First[#]]<=infub&];
-newpairs=Sort[newpairs,Min[First[#1]]<Min[First[#2]]&];
-Map[QueuePush[plausible,#]&,newpairs]]]];
+				QueuePush[likely,{int,sdm}],
 
-QueueSelect[likely,likely,Min[First[#]]<=infub&];
-infwhere=QueueList[likely];
+				If[newval=F@@SimplistInteriorPoint[sdm];newval<infub,
+					infub=newval;
+					QueueSelect[plausible,plausible,Min[First[#]]<=infub&]
+				];
 
-QueueClear[likely,plausible];
+		newpairs=Map[{gapF@@#,#}&,SplitInterval[sdm,Method->SplittingMethod]];
+		newpairs=Select[newpairs,Min[First[#]]<=infub&];
+		newpairs=Sort[newpairs,Min[First[#1]]<Min[First[#2]]&];
+		Map[QueuePush[plausible,#]&,newpairs]]]];
 
-inflb=Min@@Map[Min[First[#]]&,infwhere];
-infwhere=Last/@infwhere;
+	QueueSelect[likely,likely,Min[First[#]]<=infub&];
+	infwhere=QueueList[likely];
 
-{Interval[{inflb,infub}],If[OptionValue[certificate],infwhere,Mean[infwhere]]}]
+	QueueClear[likely,plausible];
+
+	inflb=Min@@Map[Min[First[#]]&,infwhere];
+	infwhere=Last/@infwhere;
+
+	{Interval[{inflb,infub}],If[Certificate,infwhere,Mean[infwhere]]}];
 
 
 (* ::Subtitle:: *)
